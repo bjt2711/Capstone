@@ -1,0 +1,365 @@
+---
+title: "Predictive Modeling of HDFC Bank Stock Price"
+author: "Bhavya Jeevani Thandu"
+date: "2025-07-07"
+output: html_document
+runtime: shiny
+---
+
+### Loading of necessary libraries
+```{r}
+library(tidyverse)
+library(lubridate)
+library(caret)
+library(forecast)
+library(tseries)
+library(randomForest)
+library(zoo)
+library(plotly)
+library(slider)
+library(shiny)
+```
+
+### Data Preparation and Feature Engineering
+```{r data-prep}
+# Loading and Cleaning data  
+df <- read.csv("~/Documents/CAPSTONE/FINAL/HDFCBANK_Stock Price data.csv") %>%
+    filter(!is.na(TIMESTAMP), !is.na(CLOSE), !is.na(OPEN), !is.na(VOLUME)) %>%
+    mutate(TIMESTAMP = mdy_hm(TIMESTAMP)) %>%
+    arrange(TIMESTAMP) %>%
+    mutate(
+      log_return = log(CLOSE / lag(CLOSE)),
+      MA60 = zoo::rollmean(CLOSE, k = 60, fill = NA, align = "right"),
+      Volatility60 = zoo::rollapply(log_return, width = 60, FUN = sd, fill = NA, align = "right")
+    )
+```
+#### Interpretation:
+This block purifies the unrefined stock data also structures it. It computes two paramount attributes.
+
+**MA60 (60-minute moving average)**: Improved trend metric.
+**Volatility60** presents immediate risk via employment of standard deviation regarding logarithmic gains.
+
+These fabricated attributes function admirably. The attributes additionally refine statistical and machine learning models.
+
+### Pattern-Based Future Prediction Using Windowed Features
+```{r pattern-window-prediction}
+  window_size <- 10
+  steps_ahead <- 5
+  
+  df_valid <- df %>% filter(!is.na(TIMESTAMP), !is.na(CLOSE), !is.na(MA60), !is.na(Volatility60))
+  
+  sliding_df <- slider::slide_index(
+    .x = 1:(nrow(df_valid) - window_size - steps_ahead),
+    .i = df_valid$TIMESTAMP[1:(nrow(df_valid) - window_size - steps_ahead)],
+    .f = ~ {
+      i <- .x
+      tibble(
+        CLOSE_t = df_valid$CLOSE[i + window_size],
+        MA60_t = df_valid$MA60[i + window_size],
+        VOL60_t = df_valid$Volatility60[i + window_size],
+        TARGET = df_valid$CLOSE[i + window_size + steps_ahead]
+      )
+    }
+  ) %>% bind_rows() %>% na.omit()
+  
+  set.seed(4467)
+  model_pattern <- randomForest(TARGET ~ CLOSE_t + MA60_t + VOL60_t, data = sliding_df, ntree = 100)
+  
+  latest <- df_valid %>% tail(window_size)
+  latest_input <- tibble(
+    CLOSE_t = latest$CLOSE[window_size],
+    MA60_t = latest$MA60[window_size],
+    VOL60_t = latest$Volatility60[window_size]
+  )
+  
+  future_pred <- predict(model_pattern, newdata = latest_input)
+  paste("Predicted CLOSE Price using Pattern Model:", round(future_pred, 2))
+```
+#### Interpretation:
+A moving aperture gleans configurations from prior cost conduct. The Random Forest model is utilized to forecast the CLOSE price five time steps forward. It utilizes current values regarding CLOSE, MA60, with Volatility60.
+
+##### Result:
+For prognosticating forthcoming price movement, the model emulates how merchants scrutinize current configurations utilizing segmented input attributes. A provisional potential assessment regarding stock behavior stems from the forecast outcome.
+
+### Predicting Tomorrow's Opening Price
+```{r next-open-prediction}
+  # Create a new column for tomorrow's opening price (1-step ahead OPEN)
+  df_open <- df %>%
+    arrange(TIMESTAMP) %>%
+    mutate(NEXT_OPEN = lead(OPEN, 1)) %>%
+    filter(!is.na(NEXT_OPEN))
+  
+  # Select features to train the model (previous day's CLOSE, MA60, etc.)
+  open_model_data <- df_open %>%
+    select(NEXT_OPEN, CLOSE, MA60, Volatility60, VOLUME) %>%
+    na.omit()
+  
+  # Train Random Forest model to predict NEXT_OPEN
+  set.seed(42)
+  model_open <- randomForest(NEXT_OPEN ~ ., data = open_model_data, ntree = 100)
+  
+  # Predict tomorrow's open using the most recent row of data
+  latest_row <- df_open %>% tail(1)
+  input_open <- latest_row %>%
+    select(CLOSE, MA60, Volatility60, VOLUME)
+  
+  open_pred <- predict(model_open, newdata = input_open)
+  paste("Predicted OPEN Price for Next Time Step:", round(open_pred, 2))
+```
+#### Interpretation:
+A subsequent Random Forest archetype forecasts the opening price at the coming time step because it employs current market indicators. This may aid in construction. It might also serve to construct anticipatory trading schemes.
+
+##### Result:
+This forecast is notably applicable to investors should they ready themselves for the subsequent trading session to commence. Realism is augmented via MA coupled with volatility contextually.
+
+### Summary Statistics
+```{r summary-stats}
+  df %>%
+    select(CLOSE, VOLUME, MA60, Volatility60) %>%
+    summary()
+```
+#### Interpretation:
+Displays descriptive statistics for central tendencies. Ascertains if remedies for gradation, anomaly, or transmutations are requisite.
+
+##### Result:
+Heteroscedasticity indication implies elevated dispersion inside volume or CLOSE—helpful comprehension toward selecting models like ARIMA alongside transformations.
+
+### ARIMA Forecast (Next 30 minutes)
+```{r arima-forecast}
+  ts_close <- ts(na.omit(df$CLOSE), frequency = 390)
+  fit_arima <- auto.arima(ts_close)
+  future_forecast <- forecast(fit_arima, h = 30)
+  
+  autoplot(future_forecast) +
+    labs(title = "ARIMA Forecast - Next 30 Minutes", y = "Close Price", x = "Time Index") +
+    theme_minimal()
+```
+
+#### Interpretation:
+A strictly statistical ARIMA model forecasts CLOSE valuations in the ensuing 30 minutes. Order (p,d,q) gets selected mechanically.
+
+##### Result:
+For this model, univariate short-term forecasting is suitable and it executes well if assumptions stay stationary. Confidence intervals are featured in the plot, which are helpful toward risk estimation.
+
+### STL Decomposition of Close Price
+```{r decomposition}
+  ts_stl <- ts(na.omit(df$CLOSE), frequency = 390)
+  stl_decomp <- stl(ts_stl, s.window = "periodic")
+  autoplot(stl_decomp) +
+    labs(title = "STL Decomposition of CLOSE Price")
+```
+
+#### Interpretation:
+Separates the CLOSE series into residuals, seasonality, as well as trend. Recurring intraday price patterns offer explanatory power.
+
+##### Result:
+Conceiving occult architecture is sublime. More basic models might work if seasonality remains muted, like RF.
+
+### Random Forest Prediction (Manual Input Example)
+```{r rf-predict}
+  rf_data <- df %>% select(CLOSE, OPEN, HIGH, LOW, VOLUME, MA60, Volatility60) %>% na.omit()
+  
+  new_input <- data.frame(
+    OPEN = 1000,
+    HIGH = 1020,
+    LOW = 990,
+    VOLUME = 500000,
+    MA60 = 1010,
+    Volatility60 = 0.02
+  )
+  
+  model_rf <- randomForest(CLOSE ~ ., data = rf_data, ntree = 100)
+  pred_val <- predict(model_rf, newdata = new_input)
+  paste("Predicted CLOSE Price (Random Forest):", round(pred_val, 2))
+```
+#### Interpretation:
+Lets users manually input OPEN, HIGH, LOW, also VOLUME, along with MA60, plus VOL60 to enable CLOSE prediction.
+
+##### Result:
+Environments for simulation or Shiny applications find it of great value. In simulating trading circumstances, the model operates as a hypothetical engine.
+
+### Feature Importance (Random Forest)
+```{r rf-importance}
+  importance_df <- data.frame(Feature = rownames(importance(model_rf)),
+                              Importance = importance(model_rf)[, 1])
+  
+  importance_df %>%
+    ggplot(aes(x = reorder(Feature, Importance), y = Importance)) +
+    geom_bar(stat = "identity", fill = "steelblue") +
+    coord_flip() +
+    labs(title = "Feature Importance - Random Forest", x = "Feature", y = "Importance") +
+    theme_minimal()
+```
+
+#### Interpretation:
+Ranks input features upon a prediction accuracy contribution basis. It steers forthcoming feature creating coupled with assisting to explicate model conduct.
+
+##### Result:
+Relevance diagrams augment lucidity for manual plus sliding models and assist non-specialist users in comprehending the inscrutable rationale.
+
+### Feature Engineering: Technical Indicators
+```{r technical-indicators}
+library(TTR)
+
+# Convert CLOSE to a numeric vector
+bb <- BBands(as.numeric(df$CLOSE), n = 20)
+
+# Append BBands and RSI to original df
+tech_df <- df %>%
+  mutate(
+    RSI14 = RSI(CLOSE, n = 14),
+    BB_upper = bb[, "up"],
+    BB_lower = bb[, "dn"]
+  )
+
+# Plot with Bollinger Bands and RSI
+ggplot(tech_df, aes(x = TIMESTAMP)) +
+  geom_line(aes(y = CLOSE), color = "black") +
+  geom_line(aes(y = RSI14), color = "purple", na.rm = TRUE) +
+  geom_line(aes(y = BB_upper), linetype = "dashed", color = "blue", na.rm = TRUE) +
+  geom_line(aes(y = BB_lower), linetype = "dashed", color = "red", na.rm = TRUE) +
+  labs(title = "CLOSE with RSI and Bollinger Bands", y = "Price / Indicator") +
+  theme_minimal()
+```
+
+#### Interpretation:
+These indicators are established mechanisms employed to discern when circumstances are glutted or depleted. The CLOSE price overlay supports traders to pinpoint possible zones. The zones point toward potential turnarounds.
+
+##### Result:
+This project connects contemporary AI to conventional graphing via integrating machine learning forecasts.
+
+### Pattern Input Sequence for Future Prediction
+```{r pattern-sequence-plot}
+  pattern_df <- df_valid %>% tail(window_size + steps_ahead)
+  
+  pattern_plot <- tibble(
+    Index = 1:(window_size + steps_ahead),
+    CLOSE = pattern_df$CLOSE,
+    MA60 = pattern_df$MA60,
+    VOL60 = pattern_df$Volatility60,
+    Label = c(rep("Input Window", window_size), rep("Target Point", steps_ahead))
+  )
+  
+  ggplot(pattern_plot, aes(x = Index)) +
+    geom_line(aes(y = CLOSE, color = Label), size = 1) +
+    geom_point(aes(y = CLOSE, color = Label), size = 2) +
+    labs(title = "Pattern Inputs and Future Target", x = "Step Index", y = "CLOSE Price") +
+    scale_color_manual(values = c("Input Window" = "steelblue", "Target Point" = "darkred")) +
+    theme_minimal()
+```
+
+#### Interpretation:
+Visualizes then the windowed data segment for prediction using patterns. “Azure = prior data.” Scarlet is the “ensuing objective.”
+
+##### Result:
+Random Forest forecasts future outcomes through a clear vision of its knowledge from prior patterns. To various stakeholders, a visualization seems quite persuasive.
+
+### Side-by-Side Prediction Comparison
+```{r add-open-to-comparison}
+  # Add tomorrow's open prediction to comparison table
+  comparison_df <- tibble(
+    Method = c("Pattern-Based (Future CLOSE)", "Manual Input (CLOSE)", "Predicted OPEN (Next Step)"),
+    Predicted_Price = c(future_pred, pred_val, open_pred)
+  )
+  
+  comparison_df %>%
+    ggplot(aes(x = Method, y = Predicted_Price, fill = Method)) +
+    geom_col(width = 0.5) +
+    geom_text(aes(label = round(Predicted_Price, 2)), vjust = -0.5, size = 5) +
+    labs(title = "Prediction Comparison: CLOSE and OPEN", y = "Predicted Price") +
+    theme_minimal() +
+    theme(legend.position = "none", axis.text.x = element_text(angle = 20, hjust = 1))
+```
+
+#### Interpretation:
+It melds the forecasts stemming out of three separate approaches.
+
+1. Pattern-Based (CLOSE)
+2. Manual Input
+3. Next Step OPEN
+
+##### Result:
+Allows benchmarking across models. Rationalizes the reason a singular methodology cannot allow forecasts hybrid or ensemble to excel.
+
+### Export Forecasted Values
+```{r export-forecast}
+  write.csv(data.frame(forecast = future_forecast$mean),
+            "Forecasted_Close_30min.csv", row.names = FALSE)
+  "Forecasted values saved to Forecasted_Close_30min.csv"
+```
+
+#### Interpretation:
+CSV saves ARIMA predictions. Valuable upon archiving, upon reuse inside Shiny apps, or upon division toward analysts.
+
+### Model Evaluation Plot
+```{r model-eval}
+  n <- nrow(rf_data)
+  train_index <- 1:floor(0.8 * n)
+  train_data <- rf_data[train_index, ]
+  test_data <- rf_data[-train_index, ]
+  
+  model_rf_split <- randomForest(CLOSE ~ ., data = train_data, ntree = 100)
+  
+  preds <- predict(model_rf_split, newdata = test_data)
+  
+  plot(test_data$CLOSE, type = "l", col = "blue", main = "Actual vs Predicted CLOSE", ylab = "Close Price")
+  lines(preds, col = "red")
+  legend("topleft", legend = c("Actual", "Predicted"), col = c("blue", "red"), lty = 1)
+```
+
+#### Interpretation:
+Random Forest estimates projected against factual are juxtaposed on a trial compilation. Highlights over/underestimation trends.
+
+##### Result:
+Visuals show model fit. Areas where gaps may be improved are indicated by tuning, by ensembling, or by feature enrichment.
+
+## Column {.sidebar}
+
+### Interactive Forecast Settings
+```{r}
+  sliderInput("horizon", "Forecast Horizon (minutes):", min = 5, max = 120, value = 30, step = 5)
+  
+  numericInput("open", "OPEN:", value = 1000)
+  numericInput("high", "HIGH:", value = 1020)
+  numericInput("low", "LOW:", value = 990)
+  numericInput("volume", "VOLUME:", value = 500000)
+  numericInput("ma", "MA60:", value = 1010)
+  numericInput("vol", "Volatility60:", value = 0.02)
+```
+
+### Dynamic Random Forest Prediction (Manual Input)
+```{r rf-result-display}
+verbatimTextOutput("manual_rf_result")
+
+renderText({
+    rf_data <- df %>% select(CLOSE, OPEN, HIGH, LOW, VOLUME, MA60, Volatility60) %>% na.omit()
+  
+    input_data <- data.frame(
+      OPEN = input$open,
+      HIGH = input$high,
+      LOW = input$low,
+      VOLUME = input$volume,
+      MA60 = input$ma,
+      Volatility60 = input$vol
+    )
+  
+    model_rf <- randomForest(CLOSE ~ ., data = rf_data, ntree = 100)
+    pred_val <- predict(model_rf, newdata = input_data)
+  
+    paste("Predicted CLOSE Price (Interactive RF):", round(pred_val, 2))
+  })
+```
+
+### Dynamic ARIMA Forecast
+```{r arima-plot-output}
+renderPlot({
+    ts_close <- ts(na.omit(df$CLOSE), frequency = 390)
+    fit_arima <- auto.arima(ts_close)
+    future_forecast <- forecast(fit_arima, h = input$horizon)
+  
+    autoplot(future_forecast) +
+      labs(title = paste("ARIMA Forecast - Next", input$horizon, "Minutes"),
+           y = "Close Price", x = "Time Index") +
+      theme_minimal()
+  })
+```
