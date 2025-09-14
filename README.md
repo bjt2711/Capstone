@@ -45,9 +45,11 @@ Bollinger Bands for upper/lower price range prediction
 
 📈 Evaluation Metrics
 
-Model	RMSE	MAE	MAPE
-ARIMA	11.37	7.25	1.51%
-RF	4.94	3.61	0.49%
+Model	  RMSE	MAE	MAPE
+
+ARIMA	  11.37	7.25	1.51%
+
+RF	 4.94	3.61	0.49%
 
 
 🖥️ R Shiny Dashboard
