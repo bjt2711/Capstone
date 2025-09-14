@@ -1,9 +1,16 @@
 Predictive Modeling of HDFC Bank Stock Price Using R
+
+
+
 This project is a Capstone submission for the MSBA program at Kent State University. It focuses on short-term stock price forecasting using minute-level data of HDFC Bank. The main goal is to use predictive modeling, feature engineering, and an interactive dashboard to support financial decision-making.
 
 📌 Objective
 Forecast the short-term stock price of HDFC Bank using statistical and machine learning models.
+
+
 Evaluate model performance on intraday data using technical indicators.
+
+
 Build a dynamic R Shiny dashboard for real-time forecasting.
 
 
